@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Camera, Plus, Home, List, Settings as SettingsIcon, X, Check, Pencil, Trash2, Flame, Droplet, TrendingUp, ChevronLeft, AlertCircle, Loader2, KeyRound } from "lucide-react";
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
+import { Camera, Plus, Home, List, Settings as SettingsIcon, X, Check, Pencil, Trash2, Flame, Droplet, TrendingUp, ChevronLeft, ChevronRight, AlertCircle, Loader2, KeyRound } from "lucide-react";
+import { BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
 import { storage } from "./storage";
 
 // ---------- constants ----------
@@ -19,8 +19,30 @@ const COLORS = {
 };
 
 const uid = () => `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-const todayStr = () => new Date().toISOString().slice(0, 10);
+// Local-time date key (YYYY-MM-DD). toISOString() would use UTC and put early-morning
+// entries on the wrong day for anyone ahead of UTC (e.g. Singapore).
+const dateKey = (d) => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+};
+const todayStr = () => dateKey(new Date());
 const fmtDay = (d) => new Date(d + "T00:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+
+// Weeks run Monday to Sunday. Returns the Monday (00:00 local) of the week containing d.
+const startOfWeek = (d) => {
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const offset = (x.getDay() + 6) % 7; // Mon=0 ... Sun=6
+  x.setDate(x.getDate() - offset);
+  return x;
+};
+const addDays = (d, n) => {
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  x.setDate(x.getDate() + n);
+  return x;
+};
+const fmtShort = (d) => d.toLocaleDateString(undefined, { day: "numeric", month: "short" });
 
 const MEAL_TYPES = ["Breakfast", "Lunch", "Dinner", "Snack"];
 const defaultMealType = () => {
@@ -236,6 +258,7 @@ export default function App() {
   const [apiKeyDraft, setApiKeyDraft] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [detailEntry, setDetailEntry] = useState(null);
+  const [weekOffset, setWeekOffset] = useState(0); // 0 = this week, -1 = last week, ...
   const fileInputRef = useRef(null);
 
   // camera/add flow state
@@ -270,26 +293,54 @@ export default function App() {
     let cursor = new Date();
     // eslint-disable-next-line no-constant-condition
     while (true) {
-      const key = cursor.toISOString().slice(0, 10);
+      const key = dateKey(cursor);
       if (byDate[key] === undefined) break;
       if (byDate[key] <= goal) {
         count += 1;
-        cursor.setDate(cursor.getDate() - 1);
+        cursor = addDays(cursor, -1);
       } else break;
     }
     return count;
   })();
 
-  const chartData = (() => {
+  // ----- weekly chart (Mon-Sun) -----
+  const thisWeekStart = startOfWeek(new Date());
+  const weekStart = addDays(thisWeekStart, weekOffset * 7);
+  const weekEnd = addDays(weekStart, 6);
+  const weekLabel =
+    weekOffset === 0 ? "This week" : weekOffset === -1 ? "Last week" : `${fmtShort(weekStart)} – ${fmtShort(weekEnd)}`;
+  const weekRange = `${fmtShort(weekStart)} – ${fmtShort(weekEnd)}`;
+
+  const weekData = (() => {
+    const todayKey = todayStr();
     const days = [];
-    for (let i = 13; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      const key = d.toISOString().slice(0, 10);
-      const total = index.filter((e) => e.date === key).reduce((s, e) => s + (e.sugarG || 0), 0);
-      days.push({ date: key, label: d.toLocaleDateString(undefined, { day: "numeric", month: "short" }), sugar: Math.round(total * 10) / 10 });
+    for (let i = 0; i < 7; i++) {
+      const d = addDays(weekStart, i);
+      const key = dateKey(d);
+      const dayEntries = index.filter((e) => e.date === key);
+      const total = dayEntries.reduce((s, e) => s + (e.sugarG || 0), 0);
+      days.push({
+        date: key,
+        label: d.toLocaleDateString(undefined, { weekday: "short" }),
+        sugar: Math.round(total * 10) / 10,
+        logged: dayEntries.length > 0,
+        future: key > todayKey,
+      });
     }
     return days;
+  })();
+
+  const loggedDays = weekData.filter((d) => d.logged);
+  const weekTotal = Math.round(loggedDays.reduce((s, d) => s + d.sugar, 0) * 10) / 10;
+  const weekAvg = loggedDays.length ? Math.round((weekTotal / loggedDays.length) * 10) / 10 : 0;
+  const daysUnderGoal = loggedDays.filter((d) => d.sugar <= goal).length;
+
+  // Earliest logged week, so the "previous" arrow stops where there's no data to look at.
+  const earliestOffset = (() => {
+    if (index.length === 0) return 0;
+    const earliest = index.reduce((min, e) => (e.date < min ? e.date : min), index[0].date);
+    const diffDays = Math.round((thisWeekStart - startOfWeek(new Date(earliest + "T00:00:00"))) / 86400000);
+    return -Math.round(diffDays / 7);
   })();
 
   const resetAddFlow = () => {
@@ -426,17 +477,71 @@ export default function App() {
             )}
 
             <div className="rounded-2xl p-4 mb-4" style={{ background: COLORS.card, border: `1px solid ${COLORS.line}` }}>
-              <div className="text-sm font-medium mb-3" style={{ color: COLORS.inkSoft }}>Sugar, last 14 days</div>
-              <ResponsiveContainer width="100%" height={160}>
-                <LineChart data={chartData} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
+              <div className="flex items-center justify-between mb-3">
+                <button
+                  onClick={() => setWeekOffset((w) => Math.max(earliestOffset, w - 1))}
+                  disabled={weekOffset <= earliestOffset}
+                  aria-label="Previous week"
+                  className="p-1.5 rounded-lg"
+                  style={{ color: weekOffset <= earliestOffset ? COLORS.line : COLORS.ink, background: COLORS.bg }}
+                >
+                  <ChevronLeft size={18} />
+                </button>
+                <div className="text-center">
+                  <div className="text-sm font-semibold" style={{ color: COLORS.ink }}>{weekLabel}</div>
+                  {weekOffset === 0 || weekOffset === -1 ? (
+                    <div className="text-xs" style={{ color: COLORS.inkSoft }}>{weekRange}</div>
+                  ) : null}
+                </div>
+                <button
+                  onClick={() => setWeekOffset((w) => Math.min(0, w + 1))}
+                  disabled={weekOffset >= 0}
+                  aria-label="Next week"
+                  className="p-1.5 rounded-lg"
+                  style={{ color: weekOffset >= 0 ? COLORS.line : COLORS.ink, background: COLORS.bg }}
+                >
+                  <ChevronRight size={18} />
+                </button>
+              </div>
+
+              <ResponsiveContainer width="100%" height={170}>
+                <BarChart data={weekData} margin={{ top: 8, right: 5, left: -20, bottom: 0 }}>
                   <CartesianGrid stroke={COLORS.line} vertical={false} />
-                  <XAxis dataKey="label" tick={{ fontSize: 10, fill: COLORS.inkSoft }} interval={2} axisLine={{ stroke: COLORS.line }} tickLine={false} />
-                  <YAxis tick={{ fontSize: 10, fill: COLORS.inkSoft }} axisLine={false} tickLine={false} />
-                  <Tooltip contentStyle={{ borderRadius: 12, border: `1px solid ${COLORS.line}`, fontSize: 12 }} />
+                  <XAxis dataKey="label" tick={{ fontSize: 11, fill: COLORS.inkSoft }} axisLine={{ stroke: COLORS.line }} tickLine={false} />
+                  <YAxis tick={{ fontSize: 10, fill: COLORS.inkSoft }} axisLine={false} tickLine={false} allowDecimals={false} />
+                  <Tooltip
+                    cursor={{ fill: COLORS.bg }}
+                    formatter={(v) => [`${v} g`, "Sugar"]}
+                    contentStyle={{ borderRadius: 12, border: `1px solid ${COLORS.line}`, fontSize: 12 }}
+                  />
                   <ReferenceLine y={goal} stroke={COLORS.rust} strokeDasharray="4 4" />
-                  <Line type="monotone" dataKey="sugar" stroke={COLORS.sage} strokeWidth={2.5} dot={{ r: 2.5 }} />
-                </LineChart>
+                  <Bar dataKey="sugar" radius={[6, 6, 0, 0]} maxBarSize={28}>
+                    {weekData.map((d) => (
+                      <Cell key={d.date} fill={d.sugar > goal ? COLORS.rust : COLORS.sage} fillOpacity={d.logged ? 1 : 0.25} />
+                    ))}
+                  </Bar>
+                </BarChart>
               </ResponsiveContainer>
+
+              <div className="grid grid-cols-3 gap-2 mt-3 text-center">
+                <div className="rounded-xl py-2" style={{ background: COLORS.bg }}>
+                  <div className="text-base font-semibold tabular-nums">{weekTotal}g</div>
+                  <div className="text-[10px]" style={{ color: COLORS.inkSoft }}>week total</div>
+                </div>
+                <div className="rounded-xl py-2" style={{ background: COLORS.bg }}>
+                  <div className="text-base font-semibold tabular-nums">{loggedDays.length ? `${weekAvg}g` : "–"}</div>
+                  <div className="text-[10px]" style={{ color: COLORS.inkSoft }}>daily average</div>
+                </div>
+                <div className="rounded-xl py-2" style={{ background: COLORS.bg }}>
+                  <div className="text-base font-semibold tabular-nums">{daysUnderGoal}/{loggedDays.length}</div>
+                  <div className="text-[10px]" style={{ color: COLORS.inkSoft }}>days under goal</div>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 mt-3 text-[10px]" style={{ color: COLORS.inkSoft }}>
+                <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm" style={{ background: COLORS.sage }} /> under goal</span>
+                <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm" style={{ background: COLORS.rust }} /> over goal</span>
+                <span className="flex items-center gap-1"><span className="inline-block w-3 border-t border-dashed" style={{ borderColor: COLORS.rust }} /> goal ({goal}g)</span>
+              </div>
             </div>
 
             <div className="text-sm font-medium mb-2" style={{ color: COLORS.inkSoft }}>Today's entries</div>

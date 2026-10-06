@@ -1,8 +1,8 @@
 # Sugar Tracker
 
 A mobile-friendly food photo tracker: snap a photo, get an AI estimate of sugar,
-calories, and carbs, and log it against a daily sugar goal with a 14-day trend
-chart and streak counter.
+calories, and carbs, and log it against a daily sugar goal with a week-by-week trend
+chart (flip between weeks) and streak counter.
 
 Built with React + Vite + Tailwind. No backend — data lives in your browser's
 `localStorage`, and photo analysis calls the Anthropic API directly from the
