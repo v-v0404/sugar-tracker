@@ -188,6 +188,34 @@ function StatPill({ icon: Icon, label, value, sub, tone = "sage" }) {
   );
 }
 
+// Photos live in each full entry (not the lightweight index), so load them on demand
+// and cache them in memory. Works for entries saved before thumbnails existed.
+const thumbCache = new Map();
+function Thumb({ id, alt }) {
+  const [src, setSrc] = useState(thumbCache.get(id) ?? null);
+  useEffect(() => {
+    let cancelled = false;
+    if (thumbCache.has(id)) {
+      setSrc(thumbCache.get(id));
+      return;
+    }
+    loadEntry(id).then((entry) => {
+      const img = entry?.image || "";
+      thumbCache.set(id, img);
+      if (!cancelled) setSrc(img);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  return (
+    <div className="w-14 h-14 rounded-lg overflow-hidden shrink-0 flex items-center justify-center" style={{ background: COLORS.sageSoft }}>
+      {src ? <img src={src} alt={alt} className="w-full h-full object-cover" /> : <Camera size={18} style={{ color: COLORS.sage }} />}
+    </div>
+  );
+}
+
 function MealBadge({ mealType }) {
   if (!mealType) return null;
   return (
@@ -552,7 +580,8 @@ export default function App() {
             )}
             <div className="flex flex-col gap-2">
               {todayEntries.map((e) => (
-                <button key={e.id} onClick={() => openDetail(e.id)} className="rounded-xl p-3 flex items-center justify-between text-left" style={{ background: COLORS.card, border: `1px solid ${COLORS.line}` }}>
+                <button key={e.id} onClick={() => openDetail(e.id)} className="rounded-xl p-3 flex items-center gap-3 text-left" style={{ background: COLORS.card, border: `1px solid ${COLORS.line}` }}>
+                  <Thumb id={e.id} alt={e.foodName} />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <div className="font-medium truncate">{e.foodName}</div>
@@ -577,7 +606,8 @@ export default function App() {
             )}
             <div className="flex flex-col gap-2">
               {index.map((e) => (
-                <button key={e.id} onClick={() => openDetail(e.id)} className="rounded-xl p-3 flex items-center justify-between text-left" style={{ background: COLORS.card, border: `1px solid ${COLORS.line}` }}>
+                <button key={e.id} onClick={() => openDetail(e.id)} className="rounded-xl p-3 flex items-center gap-3 text-left" style={{ background: COLORS.card, border: `1px solid ${COLORS.line}` }}>
+                  <Thumb id={e.id} alt={e.foodName} />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <div className="font-medium truncate">{e.foodName}</div>
